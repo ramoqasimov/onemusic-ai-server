@@ -1,14 +1,14 @@
 from fastapi import FastAPI, UploadFile, File
 import uvicorn
-import librosa
 import numpy as np
 import tempfile
+import subprocess
+import os
+from scipy.io import wavfile
 
 app = FastAPI()
 
-# ------------------------------------------------------
-# 🎧 PROFESSIONAL GENRE LIST (AZ + TR + GLOBAL)
-# ------------------------------------------------------
+
 GENRES = [
     "Azeri Pop", "Turkish Pop", "Pop",
     "Rap", "Hip-Hop", "Trap",
@@ -21,30 +21,53 @@ GENRES = [
 ]
 
 
-# ------------------------------------------------------
-# 🎛 Extract PRO audio features
-# ------------------------------------------------------
+
+def convert_to_wav(path):
+    wav_path = path.replace(".mp3", ".wav")
+    subprocess.run(["ffmpeg", "-y", "-i", path, wav_path])
+    return wav_path
+
+
+
 def extract_features(path):
-    y, sr = librosa.load(path)
+    sr, data = wavfile.read(path)
 
-    # Enerji
-    rms = float(np.mean(librosa.feature.rms(y=y)))
+    # Stereo → mono
+    if len(data.shape) > 1:
+        data = data.mean(axis=1)
 
-    # ZCR
-    zcr = float(np.mean(librosa.feature.zero_crossing_rate(y)))
+    data = data.astype(np.float32)
 
-    # Spektral centroid
-    centroid = float(np.mean(librosa.feature.spectral_centroid(y=y, sr=sr)))
+    # RMS (enerji)
+    rms = float(np.sqrt(np.mean(data ** 2)))
+
+    # Zero Crossing Rate
+    zcr = float(((data[:-1] * data[1:]) < 0).mean())
+
+    # FFT → spectral centroid
+    fft = np.abs(np.fft.rfft(data))
+    freqs = np.fft.rfftfreq(len(data), 1 / sr)
+    centroid = float(np.sum(freqs * fft) / np.sum(fft))
 
     # Bandwidth
-    bandwidth = float(np.mean(librosa.feature.spectral_bandwidth(y=y, sr=sr)))
+    mean_freq = centroid
+    bandwidth = float(np.sqrt(np.sum(((freqs - mean_freq) ** 2) * fft) / np.sum(fft)))
 
     # Rolloff
-    rolloff = float(np.mean(librosa.feature.spectral_rolloff(y=y, sr=sr)))
+    cumulative = np.cumsum(fft)
+    rolloff_idx = np.where(cumulative >= 0.85 * cumulative[-1])[0][0]
+    rolloff = float(freqs[rolloff_idx])
 
-    # BPM / Tempo
-    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-    bpm = float(tempo)
+    # Tempo (BPM)
+    autocorr = np.correlate(data, data, mode='full')
+    autocorr = autocorr[len(autocorr)//2:]
+    peaks = np.diff(np.sign(np.diff(autocorr))) < 0
+    peak_indices = np.where(peaks)[0]
+
+    bpm = 0
+    if len(peak_indices) > 1:
+        peak_diff = peak_indices[1] - peak_indices[0]
+        bpm = 60 / (peak_diff / sr)
 
     return {
         "rms": rms,
@@ -52,13 +75,11 @@ def extract_features(path):
         "centroid": centroid,
         "bandwidth": bandwidth,
         "rolloff": rolloff,
-        "bpm": bpm
+        "bpm": float(bpm)
     }
 
 
-# ------------------------------------------------------
-# 🧠 PROFESSIONAL GENRE CLASSIFICATION LOGIC
-# ------------------------------------------------------
+
 def classify(f):
     rms = f["rms"]
     zcr = f["zcr"]
@@ -67,23 +88,21 @@ def classify(f):
     rolloff = f["rolloff"]
     bpm = f["bpm"]
 
-    # === REALISTIC AI RULES ===
-
     # Trap
     if bpm >= 130 and rms > 0.08 and bandwidth > 2600:
         return "Trap"
 
-   
+    # Rap / Hip-Hop
     if 80 <= bpm <= 110 and zcr > 0.08 and centroid < 2000:
         return "Rap"
     if 85 <= bpm <= 115 and zcr > 0.06 and centroid < 2500:
         return "Hip-Hop"
 
-    # Pop (Azeri / Turkish)
+    # Pop
     if 95 <= bpm <= 130 and rms > 0.05 and centroid > 1800:
         return "Pop"
 
-    # EDM / Dance / Deep House
+    # EDM / Dance
     if bpm >= 125 and centroid > 3000 and rolloff > 3500:
         return "EDM"
     if bpm >= 118 and centroid > 2800:
@@ -120,22 +139,18 @@ def classify(f):
     return "Instrumental"
 
 
-# ------------------------------------------------------
-# 🚀 API Endpoint
-# ------------------------------------------------------
+
 @app.post("/detect-genre")
 async def detect_genre(file: UploadFile = File(...)):
     temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
     temp.write(await file.read())
     temp.close()
 
-    # Extract features
-    f = extract_features(temp.name)
+    wav_path = convert_to_wav(temp.name)
 
-    # Classify
+    f = extract_features(wav_path)
     genre = classify(f)
 
-    # SQL üçün format
     sql_format = "~" + genre.lower().replace(" ", "").replace("-", "")
 
     return {
@@ -145,8 +160,6 @@ async def detect_genre(file: UploadFile = File(...)):
     }
 
 
-# ------------------------------------------------------
-# SERVER START
-# ------------------------------------------------------
+
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="127.0.0.1", port=5000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=5000)
