@@ -1,7 +1,5 @@
 fastapi
 uvicorn
-numpy==1.26.4
-librosa==0.10.1
-soundfile
-pooch
-scipy==1.11.4
+numpy
+python-multipart
+
