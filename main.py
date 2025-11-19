@@ -6,9 +6,9 @@ import tempfile
 
 app = FastAPI()
 
-# ------------------------------------------------------
-# 🎧 PROFESIONAL GENRE LIST (AZ + TR + GLOBAL)
-# ------------------------------------------------------
+# ================================
+# 🎧 SQL-də OLAN TAM KATEQORİYA ADLARI
+# ================================
 GENRES = [
     "Azeri Pop", "Turkish Pop", "Pop",
     "Rap", "Hip-Hop", "Trap",
@@ -16,14 +16,13 @@ GENRES = [
     "EDM", "Deep House", "Dance",
     "Rock", "Alternative Rock", "Metal",
     "Arabesk", "Arabesk Rap",
-    "Folk", "Ethno Pop", "Mugham Fusion",
-    "Lo-Fi", "Acoustic", "Instrumental", "Classical"
+    "Folk", "Ethno Pop", "Mugham Fusion"
 ]
 
 
-# ------------------------------------------------------
-# 🎛 LIBROSA OLMADAN PRO AUDIO FEATURES
-# ------------------------------------------------------
+# ================================
+# 🎛 AUDIO FEATURE EXTRACTOR
+# ================================
 def extract_features(path):
     y, sr = sf.read(path)
 
@@ -31,31 +30,21 @@ def extract_features(path):
     if len(y.shape) > 1:
         y = np.mean(y, axis=1)
 
-    # ======================
-    # RMS (enerji)
-    # ======================
-    rms = float(np.sqrt(np.mean(y**2)))
+    # RMS
+    rms = float(np.sqrt(np.mean(y ** 2)))
 
-    # ======================
-    # Zero Crossing Rate
-    # ======================
+    # ZCR
     zcr = float(((y[:-1] * y[1:]) < 0).mean())
 
-    # ======================
-    # Spectral Centroid
-    # ======================
+    # Spectral centroid
     spectrum = np.abs(np.fft.rfft(y))
-    freqs = np.fft.rfftfreq(len(y), 1/sr)
+    freqs = np.fft.rfftfreq(len(y), 1 / sr)
     centroid = float(np.sum(freqs * spectrum) / np.sum(spectrum))
 
-    # ======================
     # Bandwidth
-    # ======================
-    bandwidth = float(np.sqrt(np.sum(((freqs - centroid)**2) * spectrum) / np.sum(spectrum)))
+    bandwidth = float(np.sqrt(np.sum(((freqs - centroid) ** 2) * spectrum) / np.sum(spectrum)))
 
-    # ======================
-    # Simple BPM estimate
-    # ======================
+    # BPM estimate
     bpm = float((zcr * 200) + (centroid / 90))
 
     return {
@@ -67,15 +56,15 @@ def extract_features(path):
     }
 
 
-# ------------------------------------------------------
-# 🧠 PROFESSIONAL CLASSIFICATION (Sənin QAYDALARIN)
-# ------------------------------------------------------
-def classify(features):
-    rms = features["rms"]
-    zcr = features["zcr"]
-    centroid = features["centroid"]
-    bandwidth = features["bandwidth"]
-    bpm = features["bpm"]
+# ================================
+# 🧠 GENRE CLASSIFIER (SQL ADLARINA UYGUN)
+# ================================
+def classify(f):
+    rms = f["rms"]
+    zcr = f["zcr"]
+    centroid = f["centroid"]
+    bandwidth = f["bandwidth"]
+    bpm = f["bpm"]
 
     # === TRAP ===
     if bpm >= 130 and rms > 0.08 and bandwidth > 2600:
@@ -89,9 +78,17 @@ def classify(features):
     if 85 <= bpm <= 115 and zcr > 0.06 and centroid < 2500:
         return "Hip-Hop"
 
-    # === POP ===
+    # === POP + AZERI POP + TURKISH POP ===
     if 95 <= bpm <= 130 and rms > 0.05 and centroid > 1800:
-        return "Pop"
+        return "Pop"  # C# tərəfi bunu Azeri/Turkish olaraq dəyişə bilər
+
+    # === R&B ===
+    if bpm <= 100 and centroid < 1800 and rms < 0.06:
+        return "R&B"
+
+    # === SOUL ===
+    if rms < 0.05 and centroid < 1500:
+        return "Soul"
 
     # === EDM ===
     if bpm >= 125 and centroid > 3000 and bandwidth > 3500:
@@ -109,40 +106,40 @@ def classify(features):
     if rms > 0.1 and bandwidth > 4000:
         return "Rock"
 
+    # === ALTERNATIVE ROCK ===
+    if rms > 0.09 and 3500 < bandwidth < 4000:
+        return "Alternative Rock"
+
     # === METAL ===
     if rms > 0.12 and bandwidth > 5000:
         return "Metal"
-
-    # === R&B ===
-    if bpm <= 100 and centroid < 1800 and rms < 0.06:
-        return "R&B"
-
-    # === SOUL ===
-    if rms < 0.05 and centroid < 1500:
-        return "Soul"
 
     # === FOLK ===
     if bpm <= 90 and centroid < 1200:
         return "Folk"
 
+    # === ETHNO POP ===
+    if bpm <= 95 and 1200 <= centroid <= 2000:
+        return "Ethno Pop"
+
+    # === ARABESK ===
+    if centroid < 1500 and 60 <= bpm <= 100:
+        return "Arabesk"
+
+    # === ARABESK RAP ===
+    if centroid < 1500 and bpm > 100 and zcr > 0.07:
+        return "Arabesk Rap"
+
     # === MUGHAM FUSION ===
     if bpm <= 80 and centroid < 1000:
         return "Mugham Fusion"
 
-    # === CLASSICAL ===
-    if rms < 0.03 and centroid < 800:
-        return "Classical"
-
-    # === ACOUSTIC ===
-    if rms < 0.05 and zcr < 0.04:
-        return "Acoustic"
-
     return "Instrumental"
 
 
-# ------------------------------------------------------
-# 🚀 API Endpoint
-# ------------------------------------------------------
+# ================================
+# 🚀 API ENDPOINT
+# ================================
 @app.post("/detect-genre")
 async def detect_genre(file: UploadFile = File(...)):
     temp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
@@ -152,7 +149,7 @@ async def detect_genre(file: UploadFile = File(...)):
     features = extract_features(temp.name)
     genre = classify(features)
 
-    # SQL üçün format: ~pop , ~rap , ~hiphop
+    # SQL saved format: ~rap , ~pop , ~hiphop
     sql_genre = "~" + genre.lower().replace(" ", "").replace("-", "")
 
     return {
@@ -162,8 +159,8 @@ async def detect_genre(file: UploadFile = File(...)):
     }
 
 
-# ------------------------------------------------------
-# SERVER START (Render)
-# ------------------------------------------------------
+# ================================
+# SERVER (Render)
+# ================================
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=10000)
