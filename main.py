@@ -3,6 +3,8 @@ import uvicorn
 import numpy as np
 import soundfile as sf
 import tempfile
+import librosa
+
 
 app = FastAPI()
 
@@ -114,3 +116,4 @@ async def detect_genre(file: UploadFile = File(...)):
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=10000)
+
