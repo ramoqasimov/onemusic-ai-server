@@ -3,8 +3,7 @@ import uvicorn
 import numpy as np
 import soundfile as sf
 import tempfile
-import librosa
-
+import os
 
 app = FastAPI()
 
@@ -22,22 +21,45 @@ GENRES = [
 ]
 
 # ================================
-# 🎛 Audio Feature Extraction
+# 🎛 Audio Feature Extraction (Optimized)
 # ================================
 def extract_features(path):
-    y, sr = sf.read(path)
+    # Fayl haqqında məlumat al (Sample Rate lazımdır)
+    info = sf.info(path)
+    sr = info.samplerate
+    
+    # ⚠️ RAM qənaəti üçün yalnız ilk 30 saniyəni oxuyuruq
+    # 30 saniyə * sample_rate = oxunacaq freymlər
+    max_duration = 30 
+    frames_to_read = int(sr * max_duration)
+    
+    # Əgər mahnı qısadırsa, hamısını, uzundursa yalnız başlanğıcı oxu
+    y, sr = sf.read(path, stop=frames_to_read)
 
+    # Stereo (2 kanal) səsdirsə, Mono (1 kanal) edirik (RAM-ı yarıya endirir)
     if len(y.shape) > 1:
         y = np.mean(y, axis=1)
 
+    # Feature extraction (Numpy ilə)
     rms = float(np.sqrt(np.mean(y ** 2)))
-    zcr = float(((y[:-1] * y[1:]) < 0).mean())
+    
+    # ZCR hesablamasında sıfıra bölmə xətasına qarşı qoruma
+    if len(y) > 1:
+        zcr = float(((y[:-1] * y[1:]) < 0).mean())
+    else:
+        zcr = 0.0
 
     spectrum = np.abs(np.fft.rfft(y))
     freqs = np.fft.rfftfreq(len(y), 1 / sr)
-    centroid = float(np.sum(freqs * spectrum) / np.sum(spectrum))
-
-    bandwidth = float(np.sqrt(np.sum(((freqs - centroid) ** 2) * spectrum) / np.sum(spectrum)))
+    
+    sum_spectrum = np.sum(spectrum)
+    
+    if sum_spectrum > 0:
+        centroid = float(np.sum(freqs * spectrum) / sum_spectrum)
+        bandwidth = float(np.sqrt(np.sum(((freqs - centroid) ** 2) * spectrum) / sum_spectrum))
+    else:
+        centroid = 0.0
+        bandwidth = 0.0
 
     bpm = float((zcr * 200) + (centroid / 90))
 
@@ -50,7 +72,7 @@ def extract_features(path):
     }
 
 # ================================
-# 🧠 GENRE classifier (SQL adlarına uyğun)
+# 🧠 GENRE classifier
 # ================================
 def classify(f):
     rms = f["rms"]
@@ -101,12 +123,20 @@ def classify(f):
 # ================================
 @app.post("/detect-genre")
 async def detect_genre(file: UploadFile = File(...)):
-    temp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
-    temp.write(await file.read())
-    temp.close()
+    # Temp faylı yaradırıq
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp:
+        temp.write(await file.read())
+        temp_path = temp.name
 
-    f = extract_features(temp.name)
-    genre = classify(f)
+    try:
+        f = extract_features(temp_path)
+        genre = classify(f)
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        # İş bitdikdən sonra faylı mütləq silirik (Disk dolmasın deyə)
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
     return {
         "genre": genre,
@@ -116,4 +146,3 @@ async def detect_genre(file: UploadFile = File(...)):
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=10000)
-
