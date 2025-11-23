@@ -9,14 +9,22 @@ from scipy.spatial import distance
 app = FastAPI()
 
 # ================================
-# 📊 MEGA GENRE LISTE (PDF-dən)
+# 🛠 YARDIMÇI: SANSÜR FUNKSİYASI (Fix Infinity/NaN)
 # ================================
-# Parametrlər: 
-# bpm: Ritm sürəti
-# zcr: Sərtlik/Cızıltı (Metal/Phonk yüksək, Piano aşağı)
-# bass: Bas gücü (HipHop/EDM yüksək, Folk aşağı)
-# contrast: Səs dolğunluğu (Elektronik yüksək, Akustik aşağı)
+def safe_float(value):
+    """
+    Bu funksiya Infinity və ya NaN dəyərlərini 0.0-a çevirir.
+    C# tərəfində JSON xətası olmaması üçün vacibdir.
+    """
+    if value is None:
+        return 0.0
+    if np.isinf(value) or np.isnan(value):
+        return 0.0
+    return float(value)
 
+# ================================
+# 📊 MEGA GENRE LISTE (Sənin PDF-dən)
+# ================================
 GENRE_PROFILES = {
     # --- 1. ROCK ---
     "Classic Rock":      {"bpm": 120, "zcr": 0.07, "bass": 0.30, "contrast": 22},
@@ -212,7 +220,7 @@ GENRE_PROFILES = {
 }
 
 # ================================
-# 🎛 FEATURE EXTRACTION (Optimize)
+# 🎛 FEATURE EXTRACTION (Optimize + Sanitize)
 # ================================
 def extract_features(path):
     # RAM üçün: Yalnız 30 san, 22050Hz, Mono
@@ -225,25 +233,32 @@ def extract_features(path):
     try:
         onset_env = librosa.onset.onset_strength(y=y, sr=sr)
         tempo = librosa.beat.tempo(onset_envelope=onset_env, sr=sr)
-        bpm = float(tempo[0])
+        bpm = safe_float(tempo[0])
     except:
         bpm = 100.0
 
-    # 2. ZCR (Sərtlik - Metal/Noise üçün)
-    zcr = np.mean(librosa.feature.zero_crossing_rate(y))
+    # 2. ZCR (Sərtlik)
+    zcr = safe_float(np.mean(librosa.feature.zero_crossing_rate(y)))
 
-    # 3. Spectral Contrast (Səs dolğunluğu - EDM/Akustik)
-    S = np.abs(librosa.stft(y))
-    contrast = np.mean(librosa.feature.spectral_contrast(S=S, sr=sr))
+    # 3. Spectral Contrast
+    try:
+        S = np.abs(librosa.stft(y))
+        contrast = safe_float(np.mean(librosa.feature.spectral_contrast(S=S, sr=sr)))
+    except:
+        contrast = 20.0 # Default
 
-    # 4. Bass Energy (HipHop/Trap üçün)
-    spec = np.abs(np.fft.rfft(y))
-    freqs = np.fft.rfftfreq(len(y), 1 / sr)
-    total_energy = np.sum(spec)
-    if total_energy > 0:
-        bass_energy = np.sum(spec[(freqs < 250)]) / total_energy
-    else:
-        bass_energy = 0
+    # 4. Bass Energy
+    try:
+        spec = np.abs(np.fft.rfft(y))
+        freqs = np.fft.rfftfreq(len(y), 1 / sr)
+        total_energy = np.sum(spec)
+        
+        if total_energy > 0:
+            bass_energy = safe_float(np.sum(spec[(freqs < 250)]) / total_energy)
+        else:
+            bass_energy = 0.0
+    except:
+        bass_energy = 0.0
 
     return {
         "bpm": bpm,
@@ -267,30 +282,23 @@ def find_best_match(features):
     print(f"🔍 ANALİZ: BPM={bpm:.0f} | ZCR={features['zcr']:.3f} | Bass={features['bass']:.2f} | Contrast={features['contrast']:.1f}")
 
     for genre, profile in GENRE_PROFILES.items():
-        # --- MƏSAFƏ HESABLAMA (Weighted Euclidean Distance) ---
+        # --- MƏSAFƏ HESABLAMA ---
         
-        # 1. BPM Fərqi (Trap/Dubstep üçün 70 vs 140 problemini həll edirik)
         bpm_diff = abs(bpm - profile['bpm'])
-        if bpm_diff > 40: # Əgər fərq çoxdursa, yarısını və ya iki qatını yoxla
+        # Trap/Dubstep üçün 70/140 problemini həll edirik
+        if bpm_diff > 40:
              bpm_diff = min(bpm_diff, abs(bpm/2 - profile['bpm']), abs(bpm*2 - profile['bpm']))
 
-        # 2. ZCR (Sərtlik) - Çox vacibdir (Rock vs Pop ayırır)
         zcr_diff = abs(features['zcr'] - profile['zcr']) * 60 
-
-        # 3. Bass - (HipHop vs Folk ayırır)
         bass_diff = abs(features['bass'] - profile['bass']) * 25
-
-        # 4. Contrast - (Elektronik vs Canlı)
         contrast_diff = abs(features['contrast'] - profile['contrast']) * 1.5
 
-        # Ümumi Uzaqlıq
         total_dist = (bpm_diff * 1.2) + zcr_diff + bass_diff + contrast_diff
 
         if total_dist < min_distance:
             min_distance = total_dist
             best_genre = genre
 
-    print(f"✅ NƏTİCƏ: {best_genre}")
     return best_genre
 
 # ================================
@@ -312,9 +320,15 @@ async def detect_genre(file: UploadFile = File(...)):
         if os.path.exists(temp_path):
             os.remove(temp_path)
 
+    # Return edərkən də təhlükəsizlik üçün bir daha yoxlayırıq
     return {
         "genre": genre,
-        "features": f
+        "features": {
+            "bpm": safe_float(f['bpm']),
+            "zcr": safe_float(f['zcr']),
+            "bass": safe_float(f['bass']),
+            "contrast": safe_float(f['contrast'])
+        }
     }
 
 if __name__ == "__main__":
