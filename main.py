@@ -9,21 +9,15 @@ from scipy.spatial import distance
 app = FastAPI()
 
 # ================================
-# 🛠 YARDIMÇI: SANSÜR FUNKSİYASI (Fix Infinity/NaN)
+# 🛠 YARDIMÇI: SANSÜR (Fix Infinity)
 # ================================
 def safe_float(value):
-    """
-    Bu funksiya Infinity və ya NaN dəyərlərini 0.0-a çevirir.
-    C# tərəfində JSON xətası olmaması üçün vacibdir.
-    """
-    if value is None:
-        return 0.0
-    if np.isinf(value) or np.isnan(value):
-        return 0.0
+    if value is None: return 0.0
+    if np.isinf(value) or np.isnan(value): return 0.0
     return float(value)
 
 # ================================
-# 📊 MEGA GENRE LISTE (Sənin PDF-dən)
+# 📊 MEGA GENRE LISTE
 # ================================
 GENRE_PROFILES = {
     # --- 1. ROCK ---
@@ -220,12 +214,14 @@ GENRE_PROFILES = {
 }
 
 # ================================
-# 🎛 FEATURE EXTRACTION (Optimize + Sanitize)
+# 🎛 FEATURE EXTRACTION (ULTRA FAST)
 # ================================
 def extract_features(path):
-    # RAM üçün: Yalnız 30 san, 22050Hz, Mono
+    # ⚠️ OPTİMİZASİYA: 
+    # duration=10 (30 yox)
+    # sr=16000 (22050 yox, daha sürətli)
     try:
-        y, sr = librosa.load(path, duration=30, sr=22050, mono=True)
+        y, sr = librosa.load(path, duration=10, sr=16000, mono=True)
     except:
         return None
 
@@ -245,7 +241,7 @@ def extract_features(path):
         S = np.abs(librosa.stft(y))
         contrast = safe_float(np.mean(librosa.feature.spectral_contrast(S=S, sr=sr)))
     except:
-        contrast = 20.0 # Default
+        contrast = 20.0
 
     # 4. Bass Energy
     try:
@@ -268,24 +264,19 @@ def extract_features(path):
     }
 
 # ================================
-# 🧠 EN YAXIN JANRI TAP (Math)
+# 🧠 EN YAXIN JANRI TAP
 # ================================
 def find_best_match(features):
-    if features is None:
-        return "Unknown"
+    if features is None: return "Unknown"
 
     bpm = features['bpm']
     best_genre = "General"
     min_distance = float('inf')
 
-    # Konsola nə tapdığını yazır (Logs-da görəcəksən)
-    print(f"🔍 ANALİZ: BPM={bpm:.0f} | ZCR={features['zcr']:.3f} | Bass={features['bass']:.2f} | Contrast={features['contrast']:.1f}")
+    print(f"🔍 ANALİZ: BPM={bpm:.0f} | ZCR={features['zcr']:.3f}")
 
     for genre, profile in GENRE_PROFILES.items():
-        # --- MƏSAFƏ HESABLAMA ---
-        
         bpm_diff = abs(bpm - profile['bpm'])
-        # Trap/Dubstep üçün 70/140 problemini həll edirik
         if bpm_diff > 40:
              bpm_diff = min(bpm_diff, abs(bpm/2 - profile['bpm']), abs(bpm*2 - profile['bpm']))
 
@@ -320,7 +311,6 @@ async def detect_genre(file: UploadFile = File(...)):
         if os.path.exists(temp_path):
             os.remove(temp_path)
 
-    # Return edərkən də təhlükəsizlik üçün bir daha yoxlayırıq
     return {
         "genre": genre,
         "features": {
