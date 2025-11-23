@@ -4,143 +4,293 @@ import numpy as np
 import tempfile
 import os
 import librosa
+from scipy.spatial import distance
 
 app = FastAPI()
 
 # ================================
-# 🎛 PROFESSIONAL AUDIO FEATURE EXTRACTION
+# 📊 MEGA GENRE LISTE (PDF-dən)
+# ================================
+# Parametrlər: 
+# bpm: Ritm sürəti
+# zcr: Sərtlik/Cızıltı (Metal/Phonk yüksək, Piano aşağı)
+# bass: Bas gücü (HipHop/EDM yüksək, Folk aşağı)
+# contrast: Səs dolğunluğu (Elektronik yüksək, Akustik aşağı)
+
+GENRE_PROFILES = {
+    # --- 1. ROCK ---
+    "Classic Rock":      {"bpm": 120, "zcr": 0.07, "bass": 0.30, "contrast": 22},
+    "Hard Rock":         {"bpm": 130, "zcr": 0.10, "bass": 0.35, "contrast": 21},
+    "Soft Rock":         {"bpm": 100, "zcr": 0.04, "bass": 0.25, "contrast": 20},
+    "Pop Rock":          {"bpm": 115, "zcr": 0.06, "bass": 0.30, "contrast": 23},
+    "Punk Rock":         {"bpm": 160, "zcr": 0.12, "bass": 0.25, "contrast": 20},
+    "Psychedelic Rock":  {"bpm": 110, "zcr": 0.08, "bass": 0.30, "contrast": 19},
+    "Indie Rock":        {"bpm": 118, "zcr": 0.06, "bass": 0.28, "contrast": 24},
+    "Alternative Rock":  {"bpm": 125, "zcr": 0.09, "bass": 0.32, "contrast": 22},
+    "Garage Rock":       {"bpm": 135, "zcr": 0.11, "bass": 0.30, "contrast": 18},
+    "Glam Rock":         {"bpm": 128, "zcr": 0.07, "bass": 0.30, "contrast": 21},
+    "Progressive Rock":  {"bpm": 130, "zcr": 0.08, "bass": 0.35, "contrast": 25},
+    "Post-Rock":         {"bpm": 100, "zcr": 0.05, "bass": 0.40, "contrast": 26},
+    "Math Rock":         {"bpm": 140, "zcr": 0.06, "bass": 0.25, "contrast": 27},
+    "Noise Rock":        {"bpm": 150, "zcr": 0.15, "bass": 0.35, "contrast": 15},
+    "Surf Rock":         {"bpm": 160, "zcr": 0.05, "bass": 0.25, "contrast": 22},
+    "Southern Rock":     {"bpm": 110, "zcr": 0.06, "bass": 0.30, "contrast": 20},
+    "Blues Rock":        {"bpm": 105, "zcr": 0.05, "bass": 0.30, "contrast": 20},
+    "Folk Rock":         {"bpm": 95,  "zcr": 0.03, "bass": 0.20, "contrast": 19},
+    "Krautrock":         {"bpm": 120, "zcr": 0.06, "bass": 0.35, "contrast": 23},
+    "Stoner Rock":       {"bpm": 85,  "zcr": 0.10, "bass": 0.45, "contrast": 18},
+    "Gothic Rock":       {"bpm": 115, "zcr": 0.07, "bass": 0.35, "contrast": 21},
+    "Arena Rock":        {"bpm": 125, "zcr": 0.06, "bass": 0.35, "contrast": 22},
+    "Space Rock":        {"bpm": 110, "zcr": 0.07, "bass": 0.40, "contrast": 24},
+
+    # --- 2. METAL ---
+    "Heavy Metal":       {"bpm": 140, "zcr": 0.12, "bass": 0.40, "contrast": 19},
+    "Thrash Metal":      {"bpm": 180, "zcr": 0.16, "bass": 0.35, "contrast": 18},
+    "Death Metal":       {"bpm": 160, "zcr": 0.18, "bass": 0.45, "contrast": 17},
+    "Black Metal":       {"bpm": 170, "zcr": 0.20, "bass": 0.25, "contrast": 15},
+    "Power Metal":       {"bpm": 160, "zcr": 0.10, "bass": 0.35, "contrast": 22},
+    "Speed Metal":       {"bpm": 190, "zcr": 0.14, "bass": 0.30, "contrast": 20},
+    "Symphonic Metal":   {"bpm": 135, "zcr": 0.09, "bass": 0.40, "contrast": 24},
+    "Progressive Metal": {"bpm": 130, "zcr": 0.10, "bass": 0.35, "contrast": 26},
+    "Doom Metal":        {"bpm": 60,  "zcr": 0.11, "bass": 0.50, "contrast": 18},
+    "Gothic Metal":      {"bpm": 100, "zcr": 0.08, "bass": 0.40, "contrast": 21},
+    "Industrial Metal":  {"bpm": 130, "zcr": 0.14, "bass": 0.50, "contrast": 25},
+    "Melodic Death":     {"bpm": 150, "zcr": 0.13, "bass": 0.40, "contrast": 22},
+    "Folk Metal":        {"bpm": 130, "zcr": 0.09, "bass": 0.30, "contrast": 20},
+    "Viking Metal":      {"bpm": 140, "zcr": 0.11, "bass": 0.35, "contrast": 20},
+    "Nu Metal":          {"bpm": 110, "zcr": 0.12, "bass": 0.55, "contrast": 20},
+    "Metalcore":         {"bpm": 145, "zcr": 0.15, "bass": 0.45, "contrast": 21},
+    "Deathcore":         {"bpm": 150, "zcr": 0.18, "bass": 0.60, "contrast": 18},
+    "Grindcore":         {"bpm": 200, "zcr": 0.22, "bass": 0.30, "contrast": 14},
+    "Groove Metal":      {"bpm": 120, "zcr": 0.11, "bass": 0.50, "contrast": 20},
+    "Drone Metal":       {"bpm": 40,  "zcr": 0.10, "bass": 0.60, "contrast": 16},
+
+    # --- 3. POP ---
+    "Pop":               {"bpm": 118, "zcr": 0.04, "bass": 0.30, "contrast": 25},
+    "Dance Pop":         {"bpm": 126, "zcr": 0.05, "bass": 0.45, "contrast": 26},
+    "Electropop":        {"bpm": 128, "zcr": 0.06, "bass": 0.50, "contrast": 27},
+    "Teens Pop":         {"bpm": 120, "zcr": 0.04, "bass": 0.30, "contrast": 25},
+    "Indie Pop":         {"bpm": 105, "zcr": 0.04, "bass": 0.25, "contrast": 24},
+    "K-Pop":             {"bpm": 128, "zcr": 0.05, "bass": 0.40, "contrast": 26},
+    "J-Pop":             {"bpm": 135, "zcr": 0.06, "bass": 0.35, "contrast": 26},
+    "Synth-Pop":         {"bpm": 115, "zcr": 0.04, "bass": 0.40, "contrast": 27},
+    "Dream Pop":         {"bpm": 90,  "zcr": 0.02, "bass": 0.25, "contrast": 22},
+    "Bubblegum Pop":     {"bpm": 130, "zcr": 0.03, "bass": 0.30, "contrast": 24},
+    "Art Pop":           {"bpm": 100, "zcr": 0.05, "bass": 0.30, "contrast": 26},
+    "Baroque Pop":       {"bpm": 110, "zcr": 0.03, "bass": 0.20, "contrast": 23},
+    "Trip-Pop":          {"bpm": 85,  "zcr": 0.04, "bass": 0.40, "contrast": 24},
+
+    # --- 4. EDM ---
+    "House":             {"bpm": 124, "zcr": 0.05, "bass": 0.55, "contrast": 26},
+    "Deep House":        {"bpm": 122, "zcr": 0.03, "bass": 0.60, "contrast": 25},
+    "Future House":      {"bpm": 126, "zcr": 0.06, "bass": 0.65, "contrast": 27},
+    "Progressive House": {"bpm": 128, "zcr": 0.05, "bass": 0.50, "contrast": 26},
+    "Tropical House":    {"bpm": 110, "zcr": 0.03, "bass": 0.40, "contrast": 24},
+    "Electro House":     {"bpm": 128, "zcr": 0.08, "bass": 0.60, "contrast": 28},
+    "Tech House":        {"bpm": 125, "zcr": 0.05, "bass": 0.55, "contrast": 26},
+    "Slap House":        {"bpm": 124, "zcr": 0.05, "bass": 0.70, "contrast": 27},
+    "Bass House":        {"bpm": 128, "zcr": 0.09, "bass": 0.75, "contrast": 28},
+    "Big Room":          {"bpm": 128, "zcr": 0.07, "bass": 0.65, "contrast": 26},
+    "Trance":            {"bpm": 138, "zcr": 0.06, "bass": 0.50, "contrast": 27},
+    "Psytrance":         {"bpm": 145, "zcr": 0.08, "bass": 0.55, "contrast": 28},
+    "Goa Trance":        {"bpm": 142, "zcr": 0.07, "bass": 0.50, "contrast": 27},
+    "Techno":            {"bpm": 130, "zcr": 0.06, "bass": 0.55, "contrast": 27},
+    "Detroit Techno":    {"bpm": 135, "zcr": 0.05, "bass": 0.50, "contrast": 25},
+    "Minimal Techno":    {"bpm": 126, "zcr": 0.04, "bass": 0.45, "contrast": 24},
+    "Acid Techno":       {"bpm": 135, "zcr": 0.10, "bass": 0.50, "contrast": 28},
+    "Dubstep":           {"bpm": 140, "zcr": 0.15, "bass": 0.75, "contrast": 29},
+    "Brostep":           {"bpm": 145, "zcr": 0.18, "bass": 0.70, "contrast": 28},
+    "Chillstep":         {"bpm": 140, "zcr": 0.06, "bass": 0.50, "contrast": 23},
+    "Riddim":            {"bpm": 140, "zcr": 0.12, "bass": 0.70, "contrast": 27},
+    "Drum & Bass":       {"bpm": 174, "zcr": 0.08, "bass": 0.55, "contrast": 25},
+    "Jungle":            {"bpm": 170, "zcr": 0.10, "bass": 0.50, "contrast": 24},
+    "Liquid DnB":        {"bpm": 174, "zcr": 0.06, "bass": 0.45, "contrast": 24},
+    "Breakbeat":         {"bpm": 130, "zcr": 0.08, "bass": 0.55, "contrast": 25},
+    "IDM":               {"bpm": 140, "zcr": 0.12, "bass": 0.35, "contrast": 26},
+    "Ambient":           {"bpm": 60,  "zcr": 0.01, "bass": 0.20, "contrast": 15},
+    "Chillout":          {"bpm": 80,  "zcr": 0.02, "bass": 0.30, "contrast": 20},
+    "Lo-Fi":             {"bpm": 80,  "zcr": 0.03, "bass": 0.35, "contrast": 18},
+    "Eurodance":         {"bpm": 140, "zcr": 0.05, "bass": 0.50, "contrast": 26},
+    "Hardstyle":         {"bpm": 150, "zcr": 0.12, "bass": 0.80, "contrast": 28},
+    "Hardcore":          {"bpm": 170, "zcr": 0.15, "bass": 0.75, "contrast": 27},
+    "Gabber":            {"bpm": 180, "zcr": 0.16, "bass": 0.80, "contrast": 26},
+    "Trap EDM":          {"bpm": 145, "zcr": 0.09, "bass": 0.70, "contrast": 27},
+    "Future Bass":       {"bpm": 150, "zcr": 0.08, "bass": 0.65, "contrast": 26},
+
+    # --- 5. CLASSICAL ---
+    "Classical":         {"bpm": 70,  "zcr": 0.02, "bass": 0.15, "contrast": 18},
+    "Baroque":           {"bpm": 90,  "zcr": 0.03, "bass": 0.10, "contrast": 18},
+    "Romantic":          {"bpm": 60,  "zcr": 0.02, "bass": 0.20, "contrast": 19},
+    "Opera":             {"bpm": 80,  "zcr": 0.04, "bass": 0.20, "contrast": 20},
+    "Symphony":          {"bpm": 75,  "zcr": 0.03, "bass": 0.25, "contrast": 22},
+    "Minimalism":        {"bpm": 110, "zcr": 0.02, "bass": 0.15, "contrast": 17},
+    "Neoclassical":      {"bpm": 85,  "zcr": 0.02, "bass": 0.15, "contrast": 19},
+
+    # --- 6. HIP-HOP ---
+    "East Coast":        {"bpm": 92,  "zcr": 0.06, "bass": 0.50, "contrast": 22},
+    "West Coast":        {"bpm": 95,  "zcr": 0.05, "bass": 0.55, "contrast": 23},
+    "Trap":              {"bpm": 140, "zcr": 0.07, "bass": 0.65, "contrast": 24},
+    "Drill":             {"bpm": 142, "zcr": 0.07, "bass": 0.70, "contrast": 23},
+    "Boom Bap":          {"bpm": 90,  "zcr": 0.06, "bass": 0.50, "contrast": 21},
+    "Gangsta Rap":       {"bpm": 94,  "zcr": 0.07, "bass": 0.60, "contrast": 22},
+    "Cloud Rap":         {"bpm": 130, "zcr": 0.04, "bass": 0.45, "contrast": 19},
+    "Mumble Rap":        {"bpm": 135, "zcr": 0.05, "bass": 0.55, "contrast": 21},
+    "Emo Rap":           {"bpm": 120, "zcr": 0.05, "bass": 0.40, "contrast": 22},
+    "Horrorcore":        {"bpm": 130, "zcr": 0.10, "bass": 0.55, "contrast": 24},
+    "Crunk":             {"bpm": 150, "zcr": 0.08, "bass": 0.60, "contrast": 25},
+    "Latin Trap":        {"bpm": 130, "zcr": 0.06, "bass": 0.60, "contrast": 25},
+    "UK Rap":            {"bpm": 135, "zcr": 0.07, "bass": 0.55, "contrast": 23},
+    "Grime":             {"bpm": 140, "zcr": 0.09, "bass": 0.55, "contrast": 24},
+
+    # --- 7. R&B / SOUL ---
+    "Soul":              {"bpm": 80,  "zcr": 0.02, "bass": 0.30, "contrast": 20},
+    "Neo-Soul":          {"bpm": 85,  "zcr": 0.03, "bass": 0.35, "contrast": 21},
+    "Contemp. R&B":      {"bpm": 95,  "zcr": 0.04, "bass": 0.45, "contrast": 23},
+    "Funk":              {"bpm": 110, "zcr": 0.06, "bass": 0.50, "contrast": 24},
+    "Disco":             {"bpm": 120, "zcr": 0.05, "bass": 0.45, "contrast": 25},
+
+    # --- 8. JAZZ ---
+    "Smooth Jazz":       {"bpm": 90,  "zcr": 0.03, "bass": 0.25, "contrast": 21},
+    "Bebop":             {"bpm": 160, "zcr": 0.07, "bass": 0.30, "contrast": 24},
+    "Swing":             {"bpm": 140, "zcr": 0.05, "bass": 0.35, "contrast": 23},
+    "Cool Jazz":         {"bpm": 100, "zcr": 0.03, "bass": 0.25, "contrast": 20},
+    "Latin Jazz":        {"bpm": 120, "zcr": 0.06, "bass": 0.40, "contrast": 24},
+    "Free Jazz":         {"bpm": 130, "zcr": 0.10, "bass": 0.30, "contrast": 26},
+    "Acid Jazz":         {"bpm": 110, "zcr": 0.06, "bass": 0.45, "contrast": 23},
+
+    # --- 9. COUNTRY ---
+    "Classic Country":   {"bpm": 90,  "zcr": 0.04, "bass": 0.25, "contrast": 19},
+    "Country Pop":       {"bpm": 110, "zcr": 0.04, "bass": 0.30, "contrast": 22},
+    "Bluegrass":         {"bpm": 140, "zcr": 0.06, "bass": 0.20, "contrast": 20},
+    "Country Rock":      {"bpm": 120, "zcr": 0.06, "bass": 0.35, "contrast": 21},
+
+    # --- 10. WORLD / LATIN ---
+    "Latin Pop":         {"bpm": 105, "zcr": 0.04, "bass": 0.35, "contrast": 24},
+    "Reggaeton":         {"bpm": 95,  "zcr": 0.05, "bass": 0.55, "contrast": 25},
+    "Salsa":             {"bpm": 180, "zcr": 0.07, "bass": 0.40, "contrast": 25},
+    "Bachata":           {"bpm": 130, "zcr": 0.04, "bass": 0.35, "contrast": 22},
+    "Merengue":          {"bpm": 150, "zcr": 0.06, "bass": 0.40, "contrast": 24},
+    "Flamenco":          {"bpm": 110, "zcr": 0.06, "bass": 0.25, "contrast": 23},
+    "Turkish Pop":       {"bpm": 120, "zcr": 0.05, "bass": 0.40, "contrast": 24},
+    "Arab Pop":          {"bpm": 110, "zcr": 0.05, "bass": 0.45, "contrast": 23},
+    "Afrobeat":          {"bpm": 100, "zcr": 0.05, "bass": 0.50, "contrast": 22},
+    "Bollywood":         {"bpm": 115, "zcr": 0.06, "bass": 0.40, "contrast": 25},
+
+    # --- 11. BLUES & FOLK ---
+    "Delta Blues":       {"bpm": 80,  "zcr": 0.05, "bass": 0.25, "contrast": 20},
+    "Chicago Blues":     {"bpm": 100, "zcr": 0.06, "bass": 0.35, "contrast": 21},
+    "Electric Blues":    {"bpm": 110, "zcr": 0.07, "bass": 0.35, "contrast": 22},
+    "Indie Folk":        {"bpm": 100, "zcr": 0.03, "bass": 0.20, "contrast": 21},
+    "Celtic Folk":       {"bpm": 110, "zcr": 0.05, "bass": 0.25, "contrast": 20},
+
+    # --- 14. SOUNDTRACK ---
+    "Film Score":        {"bpm": 80,  "zcr": 0.03, "bass": 0.30, "contrast": 22},
+    "Game OST":          {"bpm": 120, "zcr": 0.05, "bass": 0.35, "contrast": 24},
+    "Epic Music":        {"bpm": 130, "zcr": 0.08, "bass": 0.50, "contrast": 26},
+    "Instrumental":      {"bpm": 90,  "zcr": 0.02, "bass": 0.25, "contrast": 18},
+
+    # --- 15. EXPERIMENTAL ---
+    "Avant-Garde":       {"bpm": 100, "zcr": 0.10, "bass": 0.30, "contrast": 18},
+    "Noise":             {"bpm": 140, "zcr": 0.25, "bass": 0.40, "contrast": 12},
+    "Drone":             {"bpm": 50,  "zcr": 0.08, "bass": 0.60, "contrast": 15},
+    "Glitch":            {"bpm": 130, "zcr": 0.15, "bass": 0.40, "contrast": 20},
+
+    # --- 16. CHILL / NEW AGE ---
+    "Meditation":        {"bpm": 60,  "zcr": 0.01, "bass": 0.10, "contrast": 14},
+    "Chillwave":         {"bpm": 90,  "zcr": 0.02, "bass": 0.35, "contrast": 20},
+    "Vaporwave":         {"bpm": 85,  "zcr": 0.03, "bass": 0.35, "contrast": 18},
+    "Synthwave":         {"bpm": 110, "zcr": 0.04, "bass": 0.45, "contrast": 24},
+    "Retrowave":         {"bpm": 120, "zcr": 0.04, "bass": 0.50, "contrast": 25},
+
+    # --- 17. OTHERS (PHONK ETC) ---
+    "Phonk":             {"bpm": 160, "zcr": 0.12, "bass": 0.65, "contrast": 21},
+    "Memphis Phonk":     {"bpm": 145, "zcr": 0.10, "bass": 0.60, "contrast": 20},
+    "Drift Phonk":       {"bpm": 165, "zcr": 0.15, "bass": 0.75, "contrast": 22}, # Ən çox istənilən :)
+    "Vaportrap":         {"bpm": 130, "zcr": 0.05, "bass": 0.50, "contrast": 20},
+    "Chiptune":          {"bpm": 150, "zcr": 0.04, "bass": 0.20, "contrast": 18},
+    "Mashup":            {"bpm": 128, "zcr": 0.06, "bass": 0.45, "contrast": 24}
+}
+
+# ================================
+# 🎛 FEATURE EXTRACTION (Optimize)
 # ================================
 def extract_features(path):
-    # ⚠️ RAM qənaəti: Yalnız ilk 30 saniyə, 22050Hz keyfiyyət, Mono
+    # RAM üçün: Yalnız 30 san, 22050Hz, Mono
     try:
         y, sr = librosa.load(path, duration=30, sr=22050, mono=True)
-    except Exception as e:
-        print(f"Error loading audio: {e}")
+    except:
         return None
 
-    # 1. BPM (Ritm sürəti)
-    onset_env = librosa.onset.onset_strength(y=y, sr=sr)
-    tempo = librosa.beat.tempo(onset_envelope=onset_env, sr=sr)
-    bpm = float(tempo[0])
+    # 1. BPM (Ritm)
+    try:
+        onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+        tempo = librosa.beat.tempo(onset_envelope=onset_env, sr=sr)
+        bpm = float(tempo[0])
+    except:
+        bpm = 100.0
 
-    # 2. HPSS (Səsi Musiqi və Baraban hissələrinə ayırırıq)
-    y_harmonic, y_percussive = librosa.effects.hpss(y)
-    
-    # Barabanların gücü (Rap/Trap/EDM üçün vacibdir)
-    percussive_energy = np.mean(y_percussive ** 2)
-    harmonic_energy = np.mean(y_harmonic ** 2)
-    
-    # Drum/Musiqi nisbəti
-    percussive_ratio = percussive_energy / (harmonic_energy + 1e-6)
-
-    # 3. SPECTRAL CONTRAST (Səsin "dolu" və ya "boş" olması)
-    # Elektronik musiqilərdə yüksək, akustiklərdə aşağı olur
-    S = np.abs(librosa.stft(y))
-    contrast = librosa.feature.spectral_contrast(S=S, sr=sr)
-    avg_contrast = np.mean(contrast)
-
-    # 4. ZERO CROSSING RATE (Sərtlik - Rock/Metal üçün)
+    # 2. ZCR (Sərtlik - Metal/Noise üçün)
     zcr = np.mean(librosa.feature.zero_crossing_rate(y))
 
-    # 5. MFCC (Səsin Rəngi - Bas mı, incə mi?)
-    mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=20)
-    mfcc_mean = np.mean(mfcc, axis=1)
-    
-    # MFCC[0] -> Səs səviyyəsi (Loudness)
-    # MFCC[1] -> Bas və Orta səslər balansı (Mənfi olanda parlaq, müsbət olanda boğuq/baslı)
-    bass_feature = mfcc_mean[1] 
+    # 3. Spectral Contrast (Səs dolğunluğu - EDM/Akustik)
+    S = np.abs(librosa.stft(y))
+    contrast = np.mean(librosa.feature.spectral_contrast(S=S, sr=sr))
+
+    # 4. Bass Energy (HipHop/Trap üçün)
+    spec = np.abs(np.fft.rfft(y))
+    freqs = np.fft.rfftfreq(len(y), 1 / sr)
+    total_energy = np.sum(spec)
+    if total_energy > 0:
+        bass_energy = np.sum(spec[(freqs < 250)]) / total_energy
+    else:
+        bass_energy = 0
 
     return {
         "bpm": bpm,
-        "percussive_ratio": float(percussive_ratio),
-        "contrast": float(avg_contrast),
-        "zcr": float(zcr),
-        "bass_feature": float(bass_feature) # Aşağı dəyər = İncə səs, Yuxarı dəyər = Bas
+        "zcr": zcr,
+        "contrast": contrast,
+        "bass": bass_energy
     }
 
 # ================================
-# 🧠 SCORING SYSTEM (Xal Sistemi)
+# 🧠 EN YAXIN JANRI TAP (Math)
 # ================================
-def classify_genre(f):
-    if f is None:
+def find_best_match(features):
+    if features is None:
         return "Unknown"
 
-    bpm = f["bpm"]
-    perc_ratio = f["percussive_ratio"] # Ritm gücü
-    contrast = f["contrast"]           # Elektroniklik
-    zcr = f["zcr"]                     # Aqressivlik (Metal/Rock)
-    bass = f["bass_feature"]           # Səs rəngi (Yüksək = Baslı)
+    bpm = features['bpm']
+    best_genre = "General"
+    min_distance = float('inf')
 
-    scores = {}
+    # Konsola nə tapdığını yazır (Logs-da görəcəksən)
+    print(f"🔍 ANALİZ: BPM={bpm:.0f} | ZCR={features['zcr']:.3f} | Bass={features['bass']:.2f} | Contrast={features['contrast']:.1f}")
 
-    # --- 1. TRAP ---
-    # Xüsusiyyətlər: Yüksək BPM (130+), Çox güclü ritm (percussive), Tünd səs
-    scores["Trap"] = 0
-    if bpm > 130: scores["Trap"] += 2
-    if perc_ratio > 1.5: scores["Trap"] += 3
-    if bass > 20: scores["Trap"] += 2
+    for genre, profile in GENRE_PROFILES.items():
+        # --- MƏSAFƏ HESABLAMA (Weighted Euclidean Distance) ---
+        
+        # 1. BPM Fərqi (Trap/Dubstep üçün 70 vs 140 problemini həll edirik)
+        bpm_diff = abs(bpm - profile['bpm'])
+        if bpm_diff > 40: # Əgər fərq çoxdursa, yarısını və ya iki qatını yoxla
+             bpm_diff = min(bpm_diff, abs(bpm/2 - profile['bpm']), abs(bpm*2 - profile['bpm']))
 
-    # --- 2. HIP-HOP / RAP ---
-    # Xüsusiyyətlər: Orta BPM (80-110), Güclü ritm
-    scores["Hip-Hop"] = 0
-    if 80 <= bpm <= 115: scores["Hip-Hop"] += 2
-    if perc_ratio > 1.2: scores["Hip-Hop"] += 2
-    if contrast > 20: scores["Hip-Hop"] += 1
+        # 2. ZCR (Sərtlik) - Çox vacibdir (Rock vs Pop ayırır)
+        zcr_diff = abs(features['zcr'] - profile['zcr']) * 60 
 
-    # --- 3. METAL ---
-    # Xüsusiyyətlər: Çox yüksək ZCR (cızıltı), Aqressiv
-    scores["Metal"] = 0
-    if zcr > 0.08: scores["Metal"] += 5 # Ən vacib göstərici
-    if bpm > 120: scores["Metal"] += 1
-    if perc_ratio > 1.0: scores["Metal"] += 1
+        # 3. Bass - (HipHop vs Folk ayırır)
+        bass_diff = abs(features['bass'] - profile['bass']) * 25
 
-    # --- 4. ROCK ---
-    # Xüsusiyyətlər: Yüksək ZCR (amma Metal qədər yox), Canlı alətlər
-    scores["Rock"] = 0
-    if 0.04 < zcr <= 0.08: scores["Rock"] += 3
-    if bpm > 90: scores["Rock"] += 1
-    if contrast < 22: scores["Rock"] += 1 # Daha akustik
+        # 4. Contrast - (Elektronik vs Canlı)
+        contrast_diff = abs(features['contrast'] - profile['contrast']) * 1.5
 
-    # --- 5. EDM / HOUSE ---
-    # Xüsusiyyətlər: Sabit BPM (120-130), Yüksək kontrast (Elektronik)
-    scores["EDM"] = 0
-    if 118 <= bpm <= 132: scores["EDM"] += 3
-    if contrast > 23: scores["EDM"] += 2
-    if perc_ratio > 1.0: scores["EDM"] += 1
+        # Ümumi Uzaqlıq
+        total_dist = (bpm_diff * 1.2) + zcr_diff + bass_diff + contrast_diff
 
-    # --- 6. POP ---
-    # Xüsusiyyətlər: Balanslı, Orta kontrast, Çox sərt deyil
-    scores["Pop"] = 0
-    if 90 <= bpm <= 125: scores["Pop"] += 2
-    if 0.02 < zcr < 0.06: scores["Pop"] += 1
-    if perc_ratio < 1.5: scores["Pop"] += 1 # Ritm vokalın qarşısını kəsmir
+        if total_dist < min_distance:
+            min_distance = total_dist
+            best_genre = genre
 
-    # --- 7. R&B / SOUL ---
-    # Xüsusiyyətlər: Yavaş BPM, Yumşaq ritm, Aşağı ZCR
-    scores["R&B"] = 0
-    if bpm < 100: scores["R&B"] += 2
-    if zcr < 0.03: scores["R&B"] += 2
-    if 0.5 < perc_ratio < 1.2: scores["R&B"] += 1
-
-    # --- 8. CLASSICAL / AMBIENT ---
-    # Xüsusiyyətlər: Çox az ritm, Çox aşağı ZCR
-    scores["Classical"] = 0
-    if perc_ratio < 0.2: scores["Classical"] += 4
-    if bpm < 80: scores["Classical"] += 1
-
-    # --- GALİBİ SEÇİRİK ---
-    # Xalları sıralayırıq
-    sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-    best_genre, best_score = sorted_scores[0]
-
-    # Konsola yazırıq ki, nəticəni görəsən
-    print(f"📊 ANALIZ: BPM={bpm:.0f} | DrumRatio={perc_ratio:.2f} | ZCR={zcr:.3f}")
-    print(f"🏆 Qalib: {best_genre} (Xal: {best_score})")
-
-    # Əgər heç bir xal toplaya bilməyibsə (çox qəribə səsdirsə)
-    if best_score == 0:
-        return "Alternative"
-
+    print(f"✅ NƏTİCƏ: {best_genre}")
     return best_genre
 
 # ================================
@@ -148,16 +298,15 @@ def classify_genre(f):
 # ================================
 @app.post("/detect-genre")
 async def detect_genre(file: UploadFile = File(...)):
-    # Temp fayl yaradırıq
     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp:
         temp.write(await file.read())
         temp_path = temp.name
 
     try:
         f = extract_features(temp_path)
-        genre = classify_genre(f)
+        genre = find_best_match(f)
     except Exception as e:
-        print(f"Server Error: {e}")
+        print(f"Xəta: {e}")
         return {"error": str(e), "genre": "Unknown"}
     finally:
         if os.path.exists(temp_path):
