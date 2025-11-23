@@ -3,4 +3,5 @@ uvicorn
 numpy
 soundfile
 python-multipart
-scipy
+librosa
+scikit-learn
