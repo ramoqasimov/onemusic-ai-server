@@ -3,3 +3,4 @@ uvicorn
 numpy
 soundfile
 python-multipart
+scipy
